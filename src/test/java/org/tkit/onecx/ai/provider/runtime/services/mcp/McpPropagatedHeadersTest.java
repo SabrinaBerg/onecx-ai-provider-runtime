@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import jakarta.enterprise.context.ContextNotActiveException;
 import jakarta.enterprise.inject.Instance;
 
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,98 @@ class McpPropagatedHeadersTest {
     void currentHeaders_returnsEmpty_whenApmPrincipalTokenMissing() {
         McpPropagatedHeaders headers = new McpPropagatedHeaders();
         headers.routingContext = routingContext(null);
+
+        assertThat(headers.currentHeaders()).isEmpty();
+    }
+
+    @Test
+    void currentHeaders_returnsEmpty_whenRoutingContextNull() {
+        McpPropagatedHeaders headers = new McpPropagatedHeaders();
+        headers.routingContext = null;
+
+        assertThat(headers.currentHeaders()).isEmpty();
+    }
+
+    @Test
+    void currentHeaders_returnsEmpty_whenRoutingContextUnsatisfied() {
+        McpPropagatedHeaders headers = new McpPropagatedHeaders();
+        @SuppressWarnings("unchecked")
+        Instance<RoutingContext> unsatisfied = mock(Instance.class);
+        when(unsatisfied.isUnsatisfied()).thenReturn(true);
+        headers.routingContext = unsatisfied;
+
+        assertThat(headers.currentHeaders()).isEmpty();
+    }
+
+    @Test
+    void currentHeaders_returnsEmpty_whenRoutingContextThrowsContextNotActiveException() {
+        McpPropagatedHeaders headers = new McpPropagatedHeaders();
+        @SuppressWarnings("unchecked")
+        Instance<RoutingContext> instance = mock(Instance.class);
+        when(instance.isUnsatisfied()).thenReturn(false);
+        when(instance.get()).thenThrow(new ContextNotActiveException("Context not active"));
+        headers.routingContext = instance;
+
+        assertThat(headers.currentHeaders()).isEmpty();
+    }
+
+    @Test
+    void currentHeaders_returnsEmpty_whenRoutingContextThrowsIllegalStateException() {
+        McpPropagatedHeaders headers = new McpPropagatedHeaders();
+        @SuppressWarnings("unchecked")
+        Instance<RoutingContext> instance = mock(Instance.class);
+        when(instance.isUnsatisfied()).thenReturn(false);
+        when(instance.get()).thenThrow(new IllegalStateException("Illegal state"));
+        headers.routingContext = instance;
+
+        assertThat(headers.currentHeaders()).isEmpty();
+    }
+
+    @Test
+    void snapshot_cachesHeaders_evenAfterRoutingContextBecomesUnavailable() {
+        McpPropagatedHeaders headers = new McpPropagatedHeaders();
+        headers.routingContext = routingContext("principal-token");
+
+        headers.snapshot();
+
+        // Simulate loss of RoutingContext (e.g. we moved to a ManagedExecutor thread).
+        @SuppressWarnings("unchecked")
+        Instance<RoutingContext> unavailable = mock(Instance.class);
+        when(unavailable.isUnsatisfied()).thenReturn(true);
+        headers.routingContext = unavailable;
+
+        assertThat(headers.currentHeaders()).containsEntry("apm-principal-token", "principal-token");
+    }
+
+    @Test
+    void snapshot_cachesCachedValue_onMultipleCalls() {
+        McpPropagatedHeaders headers = new McpPropagatedHeaders();
+        headers.routingContext = routingContext("principal-token");
+
+        // First call captures
+        headers.snapshot();
+        assertThat(headers.currentHeaders()).containsEntry("apm-principal-token", "principal-token");
+
+        // Change routing context to unsatisfied
+        @SuppressWarnings("unchecked")
+        Instance<RoutingContext> unavailable = mock(Instance.class);
+        when(unavailable.isUnsatisfied()).thenReturn(true);
+        headers.routingContext = unavailable;
+
+        // Second snapshot call should not re-read from routing context
+        headers.snapshot();
+        assertThat(headers.currentHeaders()).containsEntry("apm-principal-token", "principal-token");
+    }
+
+    @Test
+    void snapshot_cachesEmpty_whenHeaderMissing() {
+        McpPropagatedHeaders headers = new McpPropagatedHeaders();
+        headers.routingContext = routingContext(null);
+
+        headers.snapshot();
+
+        // Even with a new routing context available, cache should be used
+        headers.routingContext = routingContext("new-token");
 
         assertThat(headers.currentHeaders()).isEmpty();
     }
