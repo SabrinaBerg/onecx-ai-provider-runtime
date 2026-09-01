@@ -2,6 +2,7 @@ package org.tkit.onecx.ai.provider.runtime.services.mcp;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -40,23 +41,24 @@ public class McpService {
     @Inject
     McpPropagatedHeaders mcpPropagatedHeaders;
 
-    public McpToolRegistry createToolRegistry(AgentSnapshotDTO agent) {
+    public McpToolRegistry createToolRegistry(AgentSnapshotDTO agent, Map<String, String> propagatedHeaders) {
         if (agent == null || agent.getTools() == null || agent.getTools().isEmpty()) {
             return McpToolRegistry.empty();
         }
 
+        Map<String, String> headers = propagatedHeaders != null ? propagatedHeaders : Map.of();
         List<McpTool> allTools = new ArrayList<>();
         for (ToolSnapshotDTO tool : agent.getTools()) {
             if ("MCP".equals(safeString(tool.getType()))) {
-                allTools.addAll(discoverToolsFromServer(tool));
+                allTools.addAll(discoverToolsFromServer(tool, headers));
             }
         }
         return new McpToolRegistry(allTools);
     }
 
-    private List<McpTool> discoverToolsFromServer(ToolSnapshotDTO tool) {
+    private List<McpTool> discoverToolsFromServer(ToolSnapshotDTO tool, Map<String, String> propagatedHeaders) {
         try {
-            McpClient client = createMcpClient(tool);
+            McpClient client = createMcpClient(tool, propagatedHeaders);
             try {
                 client.checkHealth();
                 List<ToolSpecification> specs = filterByRules(tool, receiveToolSpecifications(client));
@@ -104,33 +106,28 @@ public class McpService {
         return List.of();
     }
 
-    protected McpClient createMcpClient(ToolSnapshotDTO tool) {
+    protected McpClient createMcpClient(ToolSnapshotDTO tool, Map<String, String> propagatedHeaders) {
         var transportBuilder = StreamableHttpMcpTransport.builder()
                 .url(tool.getUrl())
                 .timeout(Duration.ofSeconds(dispatchConfig.toolConfig().maxTimeout()))
                 .logRequests(dispatchConfig.toolConfig().logRequests())
                 .logResponses(dispatchConfig.toolConfig().logResponse());
 
-        Map<String, String> propagatedHeaders = mcpPropagatedHeaders.currentHeaders();
+        Map<String, String> headers = propagatedHeaders != null ? propagatedHeaders : Map.of();
         if (isOAuth2(tool)) {
-            Map<String, String> authorizationHeaders = mcpAuthHeaders.authorizationHeaders(tool, propagatedHeaders);
+            Map<String, String> authorizationHeaders = mcpAuthHeaders.authorizationHeaders(tool, headers);
             if (authorizationHeaders.isEmpty()) {
                 throw new IllegalStateException("OAuth2 MCP authorization is not available");
             }
-            // Snapshot `propagatedHeaders` is safe here because createMcpClient is invoked
-            // per chat request (RuntimeChatService.buildLocalAgent) and the McpClient lives
-            // only within that single RoutingContext. If the client ever gets cached/reused
-            // across requests, switch back to mcpPropagatedHeaders.currentHeaders() per call.
             transportBuilder.customHeaders(context -> {
-                Map<String, String> refreshedAuthorizationHeaders = mcpAuthHeaders.authorizationHeaders(tool,
-                        propagatedHeaders);
-                return mergeHeaders(propagatedHeaders,
+                Map<String, String> refreshedAuthorizationHeaders = mcpAuthHeaders.authorizationHeaders(tool, headers);
+                return mergeHeaders(headers,
                         refreshedAuthorizationHeaders.isEmpty() ? authorizationHeaders : refreshedAuthorizationHeaders);
             });
         } else if (!isBlank(tool.getApiKey())) {
-            transportBuilder.customHeaders(mergeHeaders(propagatedHeaders, Map.of("Authorization", tool.getApiKey())));
-        } else if (!propagatedHeaders.isEmpty()) {
-            transportBuilder.customHeaders(propagatedHeaders);
+            transportBuilder.customHeaders(mergeHeaders(headers, Map.of("Authorization", tool.getApiKey())));
+        } else if (!headers.isEmpty()) {
+            transportBuilder.customHeaders(headers);
         }
 
         return DefaultMcpClient.builder()
@@ -144,7 +141,9 @@ public class McpService {
         tool.setUrl(request.getUrl());
         tool.setApiKey(request.getApiKey());
         tool.setAuthMode(request.getAuthMode());
-        try (McpClient client = createMcpClient(tool)) {
+        // discoverTools is called on the request thread — read headers here.
+        Map<String, String> propagatedHeaders = mcpPropagatedHeaders.currentHeaders();
+        try (McpClient client = createMcpClient(tool, propagatedHeaders)) {
             List<ToolSpecification> specs = receiveToolSpecifications(client);
             List<DiscoveredToolDTO> tools = specs.stream().map(spec -> {
                 DiscoveredToolDTO dto = new DiscoveredToolDTO();
@@ -257,7 +256,7 @@ public class McpService {
         if ((first == null || first.isEmpty()) && (second == null || second.isEmpty())) {
             return Map.of();
         }
-        java.util.LinkedHashMap<String, String> headers = new java.util.LinkedHashMap<>();
+        LinkedHashMap<String, String> headers = new LinkedHashMap<>();
         if (first != null) {
             headers.putAll(first);
         }

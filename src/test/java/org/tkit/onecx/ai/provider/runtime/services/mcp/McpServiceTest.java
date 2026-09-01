@@ -40,7 +40,7 @@ class McpServiceTest {
     void createToolRegistry_returnsEmpty_whenAgentNull() {
         var service = serviceWithConfig();
 
-        var registry = service.createToolRegistry(null);
+        var registry = service.createToolRegistry(null, new HashMap<>());
 
         assertThat(registry.tools()).isEmpty();
     }
@@ -51,11 +51,11 @@ class McpServiceTest {
 
         var agentWithNullTools = new AgentSnapshotDTO();
         agentWithNullTools.setTools(null);
-        var nullRegistry = service.createToolRegistry(agentWithNullTools);
+        var nullRegistry = service.createToolRegistry(agentWithNullTools, new HashMap<>());
 
         var agentWithEmptyTools = new AgentSnapshotDTO();
         agentWithEmptyTools.setTools(List.of());
-        var emptyRegistry = service.createToolRegistry(agentWithEmptyTools);
+        var emptyRegistry = service.createToolRegistry(agentWithEmptyTools, new HashMap<>());
 
         assertThat(nullRegistry.tools()).isEmpty();
         assertThat(emptyRegistry.tools()).isEmpty();
@@ -78,11 +78,29 @@ class McpServiceTest {
         agent.setTools(List.of(tool("http://ok", null, "MCP"), tool("http://down", null, "MCP"),
                 tool("http://ignored", null, "REST")));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.tools()).hasSize(2);
         assertThat(registry.getToolSpecifications()).extracting(ToolSpecification::name)
                 .containsExactlyInAnyOrder("tool-a", "tool-b");
+    }
+
+    @Test
+    void createToolRegistry_normalizesNullPropagatedHeadersToEmptyMap() {
+        var service = new TestableMcpService();
+        service.dispatchConfig = dispatchConfig();
+
+        McpClient client = mock(McpClient.class);
+        when(client.listTools()).thenReturn(List.of(toolSpec("tool-a")));
+        service.registerClient("http://ok", client);
+
+        var agent = new AgentSnapshotDTO();
+        agent.setTools(List.of(tool("http://ok", null, "MCP")));
+
+        var registry = service.createToolRegistry(agent, null);
+
+        assertThat(registry.tools()).hasSize(1);
+        assertThat(service.lastPropagatedHeaders).isNotNull().isEmpty();
     }
 
     @Test
@@ -94,7 +112,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool("http://boom", null, "MCP")));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.tools()).isEmpty();
     }
@@ -115,7 +133,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.getToolSpecifications()).extracting(ToolSpecification::name)
                 .containsExactly("tool-a");
@@ -133,7 +151,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool("http://ok", null, "MCP")));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.getToolSpecifications()).extracting(ToolSpecification::name)
                 .containsExactly("tool-a");
@@ -151,7 +169,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool("http://ok", null, "MCP")));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.tools()).isEmpty();
     }
@@ -170,7 +188,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.getToolSpecifications()).extracting(ToolSpecification::name)
                 .containsExactly("tool-a");
@@ -194,7 +212,7 @@ class McpServiceTest {
             transportStatic.when(StreamableHttpMcpTransport::builder).thenReturn(transportBuilder);
             authStatic.when(() -> McpClientAuthProvider.resolve(null)).thenReturn(java.util.Optional.empty());
 
-            var registry = service.createToolRegistry(agent);
+            var registry = service.createToolRegistry(agent, new HashMap<>());
 
             assertThat(registry.tools()).isEmpty();
         }
@@ -245,7 +263,35 @@ class McpServiceTest {
             transportStatic.when(StreamableHttpMcpTransport::builder).thenReturn(transportBuilder);
             clientStatic.when(DefaultMcpClient::builder).thenReturn(clientBuilder);
 
-            assertThat(service.createMcpClient(tool)).isSameAs(client);
+            assertThat(service.createMcpClient(tool, new HashMap<>())).isSameAs(client);
+        }
+    }
+
+    @Test
+    void createMcpClient_usesEmptyHeadersWhenPropagatedHeadersAreNull() {
+        var service = serviceWithConfig();
+        var tool = tool("http://example.org", "Bearer token", "MCP");
+
+        StreamableHttpMcpTransport.Builder transportBuilder = mock(StreamableHttpMcpTransport.Builder.class);
+        StreamableHttpMcpTransport transport = mock(StreamableHttpMcpTransport.class);
+        DefaultMcpClient.Builder clientBuilder = mock(DefaultMcpClient.Builder.class);
+        DefaultMcpClient client = mock(DefaultMcpClient.class);
+
+        when(transportBuilder.url("http://example.org")).thenReturn(transportBuilder);
+        when(transportBuilder.timeout(Duration.ofSeconds(1))).thenReturn(transportBuilder);
+        when(transportBuilder.logRequests(false)).thenReturn(transportBuilder);
+        when(transportBuilder.logResponses(false)).thenReturn(transportBuilder);
+        when(transportBuilder.customHeaders(Map.of("Authorization", "Bearer token"))).thenReturn(transportBuilder);
+        when(transportBuilder.build()).thenReturn(transport);
+        when(clientBuilder.transport(transport)).thenReturn(clientBuilder);
+        when(clientBuilder.build()).thenReturn(client);
+
+        try (MockedStatic<StreamableHttpMcpTransport> transportStatic = mockStatic(StreamableHttpMcpTransport.class);
+                MockedStatic<DefaultMcpClient> clientStatic = mockStatic(DefaultMcpClient.class)) {
+            transportStatic.when(StreamableHttpMcpTransport::builder).thenReturn(transportBuilder);
+            clientStatic.when(DefaultMcpClient::builder).thenReturn(clientBuilder);
+
+            assertThat(service.createMcpClient(tool, null)).isSameAs(client);
         }
     }
 
@@ -278,7 +324,7 @@ class McpServiceTest {
             transportStatic.when(StreamableHttpMcpTransport::builder).thenReturn(transportBuilder);
             clientStatic.when(DefaultMcpClient::builder).thenReturn(clientBuilder);
 
-            assertThat(service.createMcpClient(tool)).isSameAs(client);
+            assertThat(service.createMcpClient(tool, new HashMap<>())).isSameAs(client);
             assertThat(headersCaptor.getValue().apply(null)).containsEntry("Authorization", "Bearer second");
         }
     }
@@ -313,7 +359,7 @@ class McpServiceTest {
             transportStatic.when(StreamableHttpMcpTransport::builder).thenReturn(transportBuilder);
             clientStatic.when(DefaultMcpClient::builder).thenReturn(clientBuilder);
 
-            assertThat(service.createMcpClient(tool)).isSameAs(client);
+            assertThat(service.createMcpClient(tool, new HashMap<>())).isSameAs(client);
         }
     }
 
@@ -345,7 +391,36 @@ class McpServiceTest {
             transportStatic.when(StreamableHttpMcpTransport::builder).thenReturn(transportBuilder);
             clientStatic.when(DefaultMcpClient::builder).thenReturn(clientBuilder);
 
-            assertThat(service.createMcpClient(tool)).isSameAs(client);
+            assertThat(service.createMcpClient(tool, new HashMap<>())).isSameAs(client);
+        }
+    }
+
+    @Test
+    void createMcpClient_appliesPropagatedHeadersWhenNoApiKeyOrOAuthConfigured() {
+        var service = serviceWithConfig();
+        var tool = tool("http://example.org", null, "MCP");
+        Map<String, String> propagatedHeaders = Map.of("apm-principal-token", "principal-token");
+
+        StreamableHttpMcpTransport.Builder transportBuilder = mock(StreamableHttpMcpTransport.Builder.class);
+        StreamableHttpMcpTransport transport = mock(StreamableHttpMcpTransport.class);
+        DefaultMcpClient.Builder clientBuilder = mock(DefaultMcpClient.Builder.class);
+        DefaultMcpClient client = mock(DefaultMcpClient.class);
+
+        when(transportBuilder.url("http://example.org")).thenReturn(transportBuilder);
+        when(transportBuilder.timeout(Duration.ofSeconds(1))).thenReturn(transportBuilder);
+        when(transportBuilder.logRequests(false)).thenReturn(transportBuilder);
+        when(transportBuilder.logResponses(false)).thenReturn(transportBuilder);
+        when(transportBuilder.customHeaders(propagatedHeaders)).thenReturn(transportBuilder);
+        when(transportBuilder.build()).thenReturn(transport);
+        when(clientBuilder.transport(transport)).thenReturn(clientBuilder);
+        when(clientBuilder.build()).thenReturn(client);
+
+        try (MockedStatic<StreamableHttpMcpTransport> transportStatic = mockStatic(StreamableHttpMcpTransport.class);
+                MockedStatic<DefaultMcpClient> clientStatic = mockStatic(DefaultMcpClient.class)) {
+            transportStatic.when(StreamableHttpMcpTransport::builder).thenReturn(transportBuilder);
+            clientStatic.when(DefaultMcpClient::builder).thenReturn(clientBuilder);
+
+            assertThat(service.createMcpClient(tool, propagatedHeaders)).isSameAs(client);
         }
     }
 
@@ -354,9 +429,7 @@ class McpServiceTest {
         var service = serviceWithConfig();
         var propagatedHeaders = Map.of("apm-principal-token", "principal-token");
         var tool = tool("http://example.org", null, "MCP", "OAUTH");
-        service.mcpPropagatedHeaders = mock(McpPropagatedHeaders.class);
         service.mcpAuthHeaders = mock(McpAuthHeaders.class);
-        when(service.mcpPropagatedHeaders.currentHeaders()).thenReturn(propagatedHeaders);
         when(service.mcpAuthHeaders.authorizationHeaders(tool, propagatedHeaders))
                 .thenReturn(Map.of("Authorization", "Bearer first"))
                 .thenReturn(Map.of("Authorization", "Bearer second"));
@@ -381,7 +454,7 @@ class McpServiceTest {
             transportStatic.when(StreamableHttpMcpTransport::builder).thenReturn(transportBuilder);
             clientStatic.when(DefaultMcpClient::builder).thenReturn(clientBuilder);
 
-            assertThat(service.createMcpClient(tool)).isSameAs(client);
+            assertThat(service.createMcpClient(tool, propagatedHeaders)).isSameAs(client);
             assertThat(headersCaptor.getValue().apply(null))
                     .containsEntry("Authorization", "Bearer second")
                     .containsEntry("apm-principal-token", "principal-token");
@@ -483,6 +556,8 @@ class McpServiceTest {
     void discoverTools_returnsToolsFromMcpClient() {
         var service = new TestableMcpService();
         service.dispatchConfig = dispatchConfig();
+        service.mcpPropagatedHeaders = mock(McpPropagatedHeaders.class);
+        when(service.mcpPropagatedHeaders.currentHeaders()).thenReturn(Map.of());
 
         McpClient client = mock(McpClient.class);
         when(client.listTools()).thenReturn(List.of(toolSpec("tool-a"), toolSpec("tool-b")));
@@ -502,6 +577,8 @@ class McpServiceTest {
     void discoverTools_throwsMcpDiscoveryExceptionOnFailure() {
         var service = new TestableMcpService();
         service.dispatchConfig = dispatchConfig();
+        service.mcpPropagatedHeaders = mock(McpPropagatedHeaders.class);
+        when(service.mcpPropagatedHeaders.currentHeaders()).thenReturn(Map.of());
 
         McpClient client = mock(McpClient.class);
         when(client.listTools()).thenThrow(new RuntimeException("connection refused"));
@@ -543,7 +620,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.getToolSpecifications()).extracting(ToolSpecification::name)
                 .containsExactly("tool-a");
@@ -563,7 +640,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.getToolSpecifications()).extracting(ToolSpecification::name)
                 .containsExactly("tool-a");
@@ -583,7 +660,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.tools()).isEmpty();
         org.mockito.Mockito.verify(client).close();
@@ -604,7 +681,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.tools()).hasSize(1);
         McpTool mcpTool = registry.tools().get(0);
@@ -625,7 +702,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.tools()).hasSize(1);
         McpTool mcpTool = registry.tools().get(0);
@@ -637,6 +714,8 @@ class McpServiceTest {
     void discoverTools_mapsAnnotationsFromToolSpecMetadata() {
         var service = new TestableMcpService();
         service.dispatchConfig = dispatchConfig();
+        service.mcpPropagatedHeaders = mock(McpPropagatedHeaders.class);
+        when(service.mcpPropagatedHeaders.currentHeaders()).thenReturn(Map.of());
 
         McpClient client = mock(McpClient.class);
         ToolSpecification specWithMeta = ToolSpecification.builder()
@@ -678,7 +757,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.tools()).hasSize(1);
         McpTool mcpTool = registry.tools().get(0);
@@ -747,7 +826,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.tools()).isEmpty();
     }
@@ -766,7 +845,7 @@ class McpServiceTest {
         var agent = new AgentSnapshotDTO();
         agent.setTools(List.of(tool));
 
-        var registry = service.createToolRegistry(agent);
+        var registry = service.createToolRegistry(agent, new HashMap<>());
 
         assertThat(registry.getToolSpecifications()).extracting(ToolSpecification::name)
                 .containsExactly("tool-a");
@@ -867,9 +946,7 @@ class McpServiceTest {
         var service = serviceWithConfig();
         var propagatedHeaders = Map.of("apm-principal-token", "token");
         var tool = tool("http://example.org", null, "MCP", "OAUTH");
-        service.mcpPropagatedHeaders = mock(McpPropagatedHeaders.class);
         service.mcpAuthHeaders = mock(McpAuthHeaders.class);
-        when(service.mcpPropagatedHeaders.currentHeaders()).thenReturn(propagatedHeaders);
         when(service.mcpAuthHeaders.authorizationHeaders(tool, propagatedHeaders))
                 .thenReturn(Map.of("Authorization", "Bearer initial"))
                 .thenReturn(Map.of());
@@ -894,11 +971,50 @@ class McpServiceTest {
             transportStatic.when(StreamableHttpMcpTransport::builder).thenReturn(transportBuilder);
             clientStatic.when(DefaultMcpClient::builder).thenReturn(clientBuilder);
 
-            assertThat(service.createMcpClient(tool)).isSameAs(client);
+            assertThat(service.createMcpClient(tool, propagatedHeaders)).isSameAs(client);
             assertThat(headersCaptor.getValue().apply(null))
                     .containsEntry("Authorization", "Bearer initial")
                     .containsEntry("apm-principal-token", "token");
         }
+    }
+
+    @Test
+    void mergeHeaders_returnsEmptyMapWhenBothMapsAreNullOrEmpty() throws Exception {
+        var service = serviceWithConfig();
+
+        assertThat(invokeMergeHeaders(service, null, null)).isEmpty();
+        assertThat(invokeMergeHeaders(service, Map.of(), null)).isEmpty();
+        assertThat(invokeMergeHeaders(service, null, Map.of())).isEmpty();
+    }
+
+    @Test
+    void mergeHeaders_returnsFirstWhenSecondIsNullOrEmpty() throws Exception {
+        var service = serviceWithConfig();
+        Map<String, String> first = Map.of("apm-principal-token", "token");
+
+        assertThat(invokeMergeHeaders(service, first, null)).containsExactlyEntriesOf(first);
+        assertThat(invokeMergeHeaders(service, first, Map.of())).containsExactlyEntriesOf(first);
+    }
+
+    @Test
+    void mergeHeaders_returnsSecondWhenFirstIsNullOrEmpty() throws Exception {
+        var service = serviceWithConfig();
+        Map<String, String> second = Map.of("Authorization", "Bearer token");
+
+        assertThat(invokeMergeHeaders(service, null, second)).containsExactlyEntriesOf(second);
+        assertThat(invokeMergeHeaders(service, Map.of(), second)).containsExactlyEntriesOf(second);
+    }
+
+    @Test
+    void mergeHeaders_prefersSecondMapOnKeyCollision() throws Exception {
+        var service = serviceWithConfig();
+        Map<String, String> first = Map.of("Authorization", "Bearer old", "x", "1");
+        Map<String, String> second = Map.of("Authorization", "Bearer new", "y", "2");
+
+        assertThat(invokeMergeHeaders(service, first, second))
+                .containsEntry("Authorization", "Bearer new")
+                .containsEntry("x", "1")
+                .containsEntry("y", "2");
     }
 
     private DiscoveredToolAnnotationsDTO invokeToAnnotations(McpService service, Map<String, Object> metadata)
@@ -912,6 +1028,14 @@ class McpServiceTest {
         Method method = McpService.class.getDeclaredMethod("boolMeta", Map.class, String.class);
         method.setAccessible(true);
         return (boolean) method.invoke(service, metadata, key);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, String> invokeMergeHeaders(McpService service, Map<String, String> first, Map<String, String> second)
+            throws Exception {
+        Method method = McpService.class.getDeclaredMethod("mergeHeaders", Map.class, Map.class);
+        method.setAccessible(true);
+        return (Map<String, String>) method.invoke(service, first, second);
     }
 
     private static McpService serviceWithConfig() {
@@ -978,6 +1102,7 @@ class McpServiceTest {
 
         private final Map<String, McpClient> clients = new HashMap<>();
         private final Map<String, RuntimeException> creationErrors = new HashMap<>();
+        private Map<String, String> lastPropagatedHeaders;
 
         void registerClient(String url, McpClient client) {
             clients.put(url, client);
@@ -988,7 +1113,8 @@ class McpServiceTest {
         }
 
         @Override
-        protected McpClient createMcpClient(ToolSnapshotDTO tool) {
+        protected McpClient createMcpClient(ToolSnapshotDTO tool, Map<String, String> propagatedHeaders) {
+            lastPropagatedHeaders = propagatedHeaders;
             RuntimeException ex = creationErrors.get(tool.getUrl());
             if (ex != null) {
                 throw ex;
