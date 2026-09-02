@@ -13,12 +13,12 @@ import org.jboss.resteasy.reactive.RestResponse;
 import org.junit.jupiter.api.Test;
 import org.tkit.onecx.ai.provider.runtime.common.RuntimeChatException;
 import org.tkit.onecx.ai.provider.runtime.services.agent.RuntimeChatService;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.tkit.onecx.ai.provider.runtime.services.mcp.McpService;
 import org.tkit.onecx.ai.provider.runtime.services.provider.ProviderHealthService;
 import org.tkit.onecx.ai.provider.runtime.test.AbstractTest;
 import org.tkit.quarkus.security.test.GenerateKeycloakClient;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.*;
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.ProviderHealthStatusDTO.StatusEnum;
@@ -148,7 +148,7 @@ class RuntimeRestControllerTest extends AbstractTest {
     }
 
     @Test
-    void textDispatch_requestAndResponseSchemaFieldsRemainTyped() {
+    void compatibility_textDispatch_requestAndResponseSchemaFieldsRemainTyped() {
         RuntimeChatRequestDTO request = chatRequest();
 
         // Request schema fields remain present and typed as the contract declares.
@@ -174,7 +174,7 @@ class RuntimeRestControllerTest extends AbstractTest {
     }
 
     @Test
-    void providerHealth_requestAndResponseSchemaFieldsRemainTyped() {
+    void compatibility_providerHealth_requestAndResponseSchemaFieldsRemainTyped() {
         ProviderHealthRequestDTO request = providerHealthRequest();
 
         // Request schema fields remain present and typed as the contract declares.
