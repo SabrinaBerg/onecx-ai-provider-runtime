@@ -13,6 +13,8 @@ import org.jboss.resteasy.reactive.RestResponse;
 import org.junit.jupiter.api.Test;
 import org.tkit.onecx.ai.provider.runtime.common.RuntimeChatException;
 import org.tkit.onecx.ai.provider.runtime.services.agent.RuntimeChatService;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.tkit.onecx.ai.provider.runtime.services.mcp.McpService;
 import org.tkit.onecx.ai.provider.runtime.services.provider.ProviderHealthService;
 import org.tkit.onecx.ai.provider.runtime.test.AbstractTest;
@@ -118,6 +120,32 @@ class RuntimeRestControllerTest extends AbstractTest {
     }
 
     // ---- contract compatibility: pin the typed text-dispatch and provider-health shapes ----
+
+    @Test
+    void compatibility_textDispatch_requestAndResponseShapesRemainValid() throws Exception {
+        // A valid typed text dispatch request built from the current DTO fields.
+        RuntimeChatRequestDTO request = chatRequest();
+        RuntimeChatResponseDTO serviceResponse = new RuntimeChatResponseDTO();
+        serviceResponse.setMessage("dispatched ok");
+
+        when(runtimeChatService.chat(request)).thenReturn(serviceResponse);
+
+        try (Response response = controller.chat(request)) {
+            // Existing clients see the HTTP success status the controller currently returns.
+            assertThat(response.getStatus()).isEqualTo(Response.Status.OK.getStatusCode());
+
+            RuntimeChatResponseDTO body = (RuntimeChatResponseDTO) response.getEntity();
+            assertThat(body).isNotNull();
+            // The typed response field expected by existing clients remains present and correct.
+            assertThat(body.getMessage()).isEqualTo("dispatched ok");
+
+            // The serialized response JSON still carries the existing typed response field.
+            String json = new ObjectMapper().writeValueAsString(body);
+            assertThat(json).contains("message").contains("dispatched ok");
+        }
+
+        verify(runtimeChatService).chat(request);
+    }
 
     @Test
     void textDispatch_requestAndResponseSchemaFieldsRemainTyped() {

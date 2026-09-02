@@ -235,16 +235,17 @@
                 <version>3.6.0</version>
                 <executions>
                     <execution>
-                        <id>attach-openapi-runtime-contract</id>
+                        <id>attach-runtime-contract</id>
+                        <phase>package</phase>
                         <goals>
                             <goal>attach-artifact</goal>
                         </goals>
                         <configuration>
                             <artifacts>
                                 <artifact>
-                                    <file>src/main/openapi/openapi-runtime.yaml</file>
-                                    <classifier>openapi-runtime</classifier>
+                                    <file>${project.basedir}/src/main/openapi/openapi-runtime.yaml</file>
                                     <type>yaml</type>
+                                    <classifier>runtime-contract</classifier>
                                 </artifact>
                             </artifacts>
                         </configuration>

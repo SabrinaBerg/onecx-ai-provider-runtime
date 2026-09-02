@@ -4,35 +4,53 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 
 import org.junit.jupiter.api.Test;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * Validates that the OpenAPI contract published as the {@code openapi-runtime} classifier artifact
- * (see {@code pom.xml} / build-helper {@code attach-artifact}) exists and is structurally complete
- * for consumption by downstream modules.
+ * Validates that the runtime OpenAPI contract published as the {@code runtime-contract}
+ * classifier artifact (see {@code pom.xml} / build-helper {@code attach-artifact}) exists, is
+ * structurally complete, and is wired into the release lifecycle so downstream modules can resolve
+ * an immutable, versioned artifact instead of reading a moving branch.
  *
  * <p>
  * This is a plain JUnit test (no Quarkus bootstrap, no containers) so it runs in any environment
- * and guards the invariant that the released contract artifact is a well-formed, self-contained
+ * and guards two invariants: the released contract artifact is a well-formed, self-contained
  * OpenAPI document carrying the typed text-dispatch and provider-health operations consumers depend
- * on.
+ * on, and the Maven build actually attaches it with the exact coordinates consumers resolve by.
  */
 class OpenApiContractPublicationTest {
 
     private static final Path CONTRACT = Paths.get("src/main/openapi/openapi-runtime.yaml");
+    private static final Path POM = Paths.get("pom.xml");
 
     @Test
-    void contractFile_existsAndIsWellFormedOpenApi() throws IOException {
+    void contractFile_existsIsNonEmptyAndIsWellFormedOpenApi() throws IOException {
         assertThat(CONTRACT)
                 .as("the runtime contract source file must exist for publication")
                 .isRegularFile();
+
+        assertThat(CONTRACT.toFile().length())
+                .as("the runtime contract source file must be non-empty for publication")
+                .isGreaterThan(0L);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> spec = loadContract();
@@ -50,6 +68,12 @@ class OpenApiContractPublicationTest {
         assertThat((String) openapiVersion)
                 .as("the document must target OpenAPI 3.x so it can be served and consumed")
                 .startsWith("3.");
+
+        assertThat(info())
+                .as("the document must declare an info section for consumer identity")
+                .isNotNull();
+        assertThat(info().get("title")).as("info.title must be present").isNotNull();
+        assertThat(String.valueOf(info().get("title"))).isNotBlank();
     }
 
     @Test
@@ -58,10 +82,6 @@ class OpenApiContractPublicationTest {
 
         assertThat(info).as("info section must be present").isNotNull();
 
-        Object title = info.get("title");
-        assertThat(title).as("info.title must be non-blank").isNotNull();
-        assertThat(String.valueOf(title)).isNotBlank();
-
         // The immutable identity field: consumers resolve the artifact by Maven version, but the
         // spec itself must carry a non-empty version so the released artifact is self-describing.
         Object version = info.get("version");
@@ -69,6 +89,42 @@ class OpenApiContractPublicationTest {
                 .as("info.version must be present (immutable identity of the contract)")
                 .isNotNull();
         assertThat(String.valueOf(version)).isNotBlank();
+    }
+
+    @Test
+    void pom_declaresContractArtifactAttachment() throws Exception {
+        Path pomPath = resolveProjectRoot().resolve(POM);
+        assertThat(pomPath).as("pom.xml must be present to inspect the publication wiring").isRegularFile();
+
+        Document pom = parseXml(Files.readString(pomPath, StandardCharsets.UTF_8));
+
+        // Locate the build-helper plugin declaration.
+        Element plugin = findBuildHelperPlugin(pom).orElseThrow();
+        assertThat(firstText(plugin, "groupId"))
+                .as("build-helper-maven-plugin groupId")
+                .isEqualTo("org.codehaus.mojo");
+
+        // The execution must bind the attach-artifact goal to the package phase.
+        Element execution = firstExecution(plugin).orElseThrow();
+        assertThat(execution).as("build-helper-maven-plugin must declare an execution").isNotNull();
+        assertThat(childText(execution, "phase"))
+                .as("the attach-artifact execution must be bound to the package phase")
+                .isEqualTo("package");
+        assertThat(goalNames(execution))
+                .as("the execution must run the attach-artifact goal")
+                .contains("attach-artifact");
+
+        // The attached artifact must carry the exact coordinates consumers resolve by.
+        Element artifact = firstChild(execution, "configuration", "artifacts", "artifact").orElseThrow();
+        assertThat(childText(artifact, "file"))
+                .as("the attached contract file path")
+                .isEqualTo("${project.basedir}/src/main/openapi/openapi-runtime.yaml");
+        assertThat(childText(artifact, "type"))
+                .as("the attached contract type")
+                .isEqualTo("yaml");
+        assertThat(childText(artifact, "classifier"))
+                .as("the attached contract classifier")
+                .isEqualTo("runtime-contract");
     }
 
     @Test
@@ -196,23 +252,120 @@ class OpenApiContractPublicationTest {
         return Paths.get("").toAbsolutePath().resolve(CONTRACT);
     }
 
+    private static Path resolveProjectRoot() {
+        Path candidate = Paths.get("").toAbsolutePath();
+        for (int depth = 0; depth < 5; depth++) {
+            if (Files.isRegularFile(candidate.resolve(POM)) && Files.isRegularFile(candidate.resolve(CONTRACT))) {
+                return candidate;
+            }
+            if (candidate.getParent() == null) {
+                break;
+            }
+            candidate = candidate.getParent();
+        }
+        return Paths.get("").toAbsolutePath();
+    }
+
+    private static Document parseXml(String content) throws IOException, ParserConfigurationException,
+            org.xml.sax.SAXException {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(false);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        return builder.parse(new InputSource(new java.io.StringReader(content)));
+    }
+
+    /** Finds the {@code <plugin>} element declaring the build-helper plugin. */
+    private static Optional<Element> findBuildHelperPlugin(Document pom) {
+        NodeList nodes = pom.getElementsByTagName("artifactId");
+        for (int i = 0; i < nodes.getLength(); i++) {
+            Node n = nodes.item(i);
+            if (n instanceof Element && "build-helper-maven-plugin".equals(((Element) n).getTextContent().trim())) {
+                return ancestor((Element) n, "plugin");
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<Element> ancestor(Element element, String tag) {
+        Node parent = element.getParentNode();
+        while (parent != null) {
+            if (parent instanceof Element && tag.equals(parent.getNodeName())) {
+                return Optional.of((Element) parent);
+            }
+            parent = parent.getParentNode();
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<Element> firstExecution(Element plugin) {
+        NodeList nodes = plugin.getElementsByTagName("execution");
+        return nodes.getLength() > 0 ? Optional.of((Element) nodes.item(0)) : Optional.empty();
+    }
+
+    private static List<String> goalNames(Element execution) {
+        List<String> goals = new ArrayList<>();
+        NodeList nodes = execution.getElementsByTagName("goal");
+        for (int i = 0; i < nodes.getLength(); i++) {
+            if (nodes.item(i) instanceof Element) {
+                goals.add(((Element) nodes.item(i)).getTextContent().trim());
+            }
+        }
+        return goals;
+    }
+
+    /** Walks a fixed tag chain from {@code root}, returning the element at the last tag. */
+    private static Optional<Element> firstChild(Element root, String... chain) {
+        Element current = root;
+        for (String tag : chain) {
+            NodeList nodes = current.getElementsByTagName(tag);
+            Element found = null;
+            for (int i = 0; i < nodes.getLength(); i++) {
+                if (nodes.item(i) instanceof Element) {
+                    found = (Element) nodes.item(i);
+                    break;
+                }
+            }
+            if (found == null) {
+                return Optional.empty();
+            }
+            current = found;
+        }
+        return Optional.of(current);
+    }
+
+    private static String childText(Element element, String tag) {
+        NodeList nodes = element.getChildNodes();
+        for (int i = 0; i < nodes.getLength(); i++) {
+            Node n = nodes.item(i);
+            if (n instanceof Element && tag.equals(n.getNodeName())) {
+                return ((Element) n).getTextContent().trim();
+            }
+        }
+        return null;
+    }
+
+    private static String firstText(Element element, String tag) {
+        NodeList nodes = element.getElementsByTagName(tag);
+        if (nodes.getLength() > 0 && nodes.item(0) instanceof Element) {
+            return ((Element) nodes.item(0)).getTextContent().trim();
+        }
+        return null;
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> info() throws IOException {
-        @SuppressWarnings("unchecked")
         Map<String, Object> spec = loadContract();
         return (Map<String, Object>) spec.get("info");
     }
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> paths() throws IOException {
-        @SuppressWarnings("unchecked")
         Map<String, Object> spec = loadContract();
         return (Map<String, Object>) spec.get("paths");
     }
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> schemas() throws IOException {
-        @SuppressWarnings("unchecked")
         Map<String, Object> spec = loadContract();
         @SuppressWarnings("unchecked")
         Map<String, Object> components = (Map<String, Object>) spec.get("components");
@@ -225,7 +378,6 @@ class OpenApiContractPublicationTest {
 
     @SuppressWarnings("unchecked")
     private static String requestSchemaRef(Map<String, Object> operation) {
-        @SuppressWarnings("unchecked")
         Map<String, Object> requestBody = (Map<String, Object>) operation.get("requestBody");
         assertThat(requestBody).as("operation must declare a request body").isNotNull();
         assertThat(Boolean.TRUE.equals(requestBody.get("required")))
@@ -241,9 +393,7 @@ class OpenApiContractPublicationTest {
 
     @SuppressWarnings("unchecked")
     private static String responseSchemaRef(Map<String, Object> operation, String statusCode) {
-        @SuppressWarnings("unchecked")
         Map<String, Object> responses = (Map<String, Object>) operation.get("responses");
-        @SuppressWarnings("unchecked")
         Map<String, Object> response = (Map<String, Object>) responses.get(statusCode);
         assertThat(response).as("operation must declare a " + statusCode + " response").isNotNull();
         @SuppressWarnings("unchecked")

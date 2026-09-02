@@ -1,18 +1,18 @@
-= Runtime Contract Artifact
+= Runtime contract artifact
 
-The `onecx-ai-provider-runtime` release publishes a **versioned, immutable runtime contract
-artifact** in addition to the primary JAR. The contract is the OpenAPI document for the internal
-runtime service (`src/main/openapi/openapi-runtime.yaml`). It is attached to the release with the
-classifier `openapi-runtime` and type `yaml`, so it is published to the Maven repository under the
-same immutable version as the binary.
+The `onecx-ai-provider-runtime` release publishes the runtime OpenAPI contract
+(`src/main/openapi/openapi-runtime.yaml`) as a **versioned, immutable Maven artifact** in addition
+to the primary JAR. Downstream modules can generate compatible clients from a fixed release
+instead of reading a moving branch. The existing typed dispatch interface and provider-health
+behavior are unchanged; the contract is an additional classified artifact published alongside the
+binary.
 
-== Purpose
+== Published artifact coordinates
 
-Before this artifact existed, the runtime OpenAPI contract only lived in source, so consumers had
-no way to depend on an immutable, version-pinned contract. Consumers now depend on a Maven artifact
-instead of fetching a branch file.
+The contract artifact is attached to the release with the exact coordinates below, where
+`<version>` is the released runtime version (bound to `${project.version}` at build time):
 
-== Maven coordinates
+`org.tkit.onecx:onecx-ai-provider-runtime:<version>:yaml:runtime-contract`
 
 [cols="2",options="header",]
 |===
@@ -25,64 +25,75 @@ instead of fetching a branch file.
 | `onecx-ai-provider-runtime`
 
 | Version
-| the released version (set by the release process; immutable once published)
+| the released version (`${project.version}`; immutable once published)
 
 | Type
 | `yaml`
 
 | Classifier
-| `openapi-runtime`
+| `runtime-contract`
 |===
 
 In the repository layout the file sits next to the primary artifact as
-`onecx-ai-provider-runtime-<version>-openapi-runtime.yaml`.
+`onecx-ai-provider-runtime-<version>-runtime-contract.yaml`.
 
-Resolving it as a Maven dependency:
+== Immutability and version identity
+
+* Each release version publishes **one** immutable contract artifact tied to that runtime version.
+  The contract is bound to the release **version**, not to a branch.
+* Once a version is published, its `runtime-contract.yaml` is immutable: the same version always
+  resolves to the same contract.
+* The artifact is attached during the Maven `package` phase (via
+  `build-helper-maven-plugin:attach-artifact`), so it is included in the release publish together
+  with the primary artifact, under the same immutable version.
+* The primary JAR is unchanged; the contract is an additional classified artifact published
+  alongside it.
+* Consumers **must use a released version** for client generation or contract checks — never a
+  branch source file. Branch contents are mutable and carry no version guarantee.
+
+== Consumer retrieval
+
+Consumers resolve the contract artifact by Maven coordinates without fetching source from a branch.
+For a one-off download:
+
+[source,bash]
+----
+mvn -B -ntp dependency:get \
+  -DgroupId=org.tkit.onecx \
+  -DartifactId=onecx-ai-provider-runtime \
+  -Dversion=<released-version> \
+  -Dclassifier=runtime-contract \
+  -Dpackaging=yaml
+----
+
+Or declare it as a dependency:
 
 [source,xml]
 ----
 <dependency>
     <groupId>org.tkit.onecx</groupId>
     <artifactId>onecx-ai-provider-runtime</artifactId>
-    <version>RELEASED_VERSION</version> <!-- a published release version, e.g. 1.2.3 -->
-    <classifier>openapi-runtime</classifier>
+    <version><released-version></version>
+    <classifier>runtime-contract</classifier>
     <type>yaml</type>
 </dependency>
 ----
 
-Both `<classifier>openapi-runtime</classifier>` and `<type>yaml</type>` are required — without them
-the dependency resolves to the primary JAR rather than the contract.
+Both the classifier and the type are required — without them the coordinate resolves to the
+primary JAR rather than the contract.
 
-== Immutability and release behavior
+== Compatibility scope
 
-* The contract is bound to the release **version**, not to a branch. Once a version is published,
-  its `openapi-runtime.yaml` is immutable: the same version always resolves to the same contract.
-* The artifact is attached during the Maven `package` phase (via
-  `build-helper-maven-plugin:attach-artifact`), so it is included in the release publish together
-  with the primary artifact, under the same version.
-* The primary JAR is unchanged; the contract is an additional classified artifact published
-  alongside it.
-* Consumers **must use a released version** for client generation or contract checks — never a
-  branch source file. Branch contents are mutable and carry no version guarantee.
+The contract pins the internal text-dispatch and provider-health API. Text-dispatch and
+provider-health contract compatibility is validated by Quarkus/JUnit tests in this repository, so a
+signature or type drift between the published contract and the implementation fails the build:
 
-== Compatibility promise
-
-The contract pins the internal text-dispatch and provider-health API. Two operations are guaranteed
-to remain stable in shape:
-
-* `/internal/runtime/chat` — operation `chat`; request `RuntimeChatRequest` and response
-  `RuntimeChatResponse` (message is a `string`).
-* `/internal/runtime/provider-health` — operation `getProviderHealthStatus`; request
-  `ProviderHealthRequest` and response `ProviderHealthStatus` (status constrained to
-  `HEALTHY` / `UNHEALTHY`).
-
-Compatibility is enforced by tests that fail on signature or type drift along the text dispatch
-path:
-
-* `RuntimeRestControllerTest` — typed request/response shape for the text-dispatch and
-  provider-health endpoints.
-* `RuntimeChatServiceReflectionTest` — reflection assertions on method signatures, JAX-RS
-  annotations, and DTO field types tied to the dispatch path.
-* `OpenApiContractPublicationTest` — validates the published OpenAPI contract file is present and
-  complete (openapi, info, paths, text-dispatch operation, provider-health operation, and the typed
-  dispatch schemas).
+* `RuntimeRestControllerTest` — compatibility tests for the typed text-dispatch and
+  provider-health request/response shapes (the `compatibility_`-prefixed tests pin the shapes
+  existing clients rely on).
+* `ProviderHealthServiceTest` — compatibility tests pinning the healthy/unhealthy
+  provider-health semantics (`compatibility_returnsHealthyStatusForAvailableProvider`,
+  `compatibility_returnsUnhealthyStatusForFailingProvider`).
+* `OpenApiContractPublicationTest` — validates the published OpenAPI contract file is present,
+  non-empty, and complete (`openapi`, `info`, text-dispatch and provider-health operations, and the
+  typed dispatch schemas), and that the build attaches it with the exact coordinates above.

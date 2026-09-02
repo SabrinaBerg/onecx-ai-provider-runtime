@@ -10,7 +10,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.util.Arrays;
 import java.util.Collection;
@@ -25,9 +24,6 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
-import jakarta.validation.constraints.NotNull;
-import jakarta.ws.rs.POST;
-import jakarta.ws.rs.Path;
 import jakarta.ws.rs.core.Response;
 
 import org.eclipse.microprofile.context.ManagedExecutor;
@@ -51,7 +47,6 @@ import org.tkit.onecx.ai.provider.runtime.services.mcp.McpTool;
 import org.tkit.onecx.ai.provider.runtime.services.mcp.McpToolRegistry;
 import org.tkit.onecx.ai.provider.runtime.services.provider.ChatModelFactory;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonLocation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -86,16 +81,12 @@ import dev.langchain4j.service.tool.ToolExecutionResult;
 import dev.langchain4j.service.tool.ToolExecutor;
 import dev.langchain4j.skills.DefaultSkill;
 import dev.langchain4j.skills.Skills;
-import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.RuntimeInternalApi;
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.AgentGroupSnapshotDTO;
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.AgentSnapshotDTO;
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.ChatMessageDTO;
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.ChatRequestDTO;
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.ConversationDTO;
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.ExternalAgentSnapshotDTO;
-import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.ProviderHealthRequestDTO;
-import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.ProviderHealthStatusDTO;
-import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.ProviderSnapshotDTO;
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.RuntimeChatRequestDTO;
 import gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.RuntimeChatResponseDTO;
 import io.quarkus.test.junit.QuarkusTest;
@@ -1148,109 +1139,6 @@ class RuntimeChatServiceReflectionTest {
         Map<ToolSpecification, ToolExecutor> result = (Map<ToolSpecification, ToolExecutor>) invoke(
                 "toDelegateToolExecutors", new Class[] { List.class }, (Object) null);
         assertThat(result).isEmpty();
-    }
-
-    // ---- typed-dispatch contract stability ----
-    //
-    // The released OpenAPI contract artifact (classifier "openapi-runtime") is generated from the
-    // same schemas that produce the DTOs used by the dispatch path. These reflection-based checks
-    // pin the method signatures and DTO field/requirement shapes so that a signature or type drift
-    // between the implementation and the published contract fails the build.
-
-    @Test
-    void textDispatchInterface_signaturesRemainStable() throws Exception {
-        // Service entry point for the text-dispatch path.
-        Method chat = RuntimeChatService.class.getDeclaredMethod("chat", RuntimeChatRequestDTO.class);
-        assertThat(chat).isNotNull();
-        assertThat(Modifier.isPublic(chat.getModifiers())).isTrue();
-        assertThat(chat.getReturnType()).isEqualTo(RuntimeChatResponseDTO.class);
-
-        // Generated interface operations must keep the same name, parameter type, and return type
-        // the controller implements and the contract declares.
-        assertThat(RuntimeInternalApi.class.getDeclaredMethod("chat", RuntimeChatRequestDTO.class).getReturnType())
-                .isEqualTo(jakarta.ws.rs.core.Response.class);
-        assertThat(RuntimeInternalApi.class
-                .getDeclaredMethod("getProviderHealthStatus", ProviderHealthRequestDTO.class).getReturnType())
-                .isEqualTo(jakarta.ws.rs.core.Response.class);
-        assertThat(RuntimeInternalApi.class.getDeclaredMethod("discoverTools",
-                gen.org.tkit.onecx.ai.provider.runtime.rs.internal.model.ToolDiscoveryRequestDTO.class)
-                .getReturnType())
-                .isEqualTo(jakarta.ws.rs.core.Response.class);
-
-        // The interface is the single source of truth for the served contract.
-        assertThat(RuntimeInternalApi.class.isInterface()).isTrue();
-    }
-
-    @Test
-    void textDispatchOperation_exposesPostAndStablePath() throws Exception {
-        POST chatOperation = RuntimeInternalApi.class.getMethod("chat", RuntimeChatRequestDTO.class)
-                .getAnnotation(POST.class);
-        Path chatPath = RuntimeInternalApi.class.getMethod("chat", RuntimeChatRequestDTO.class)
-                .getAnnotation(Path.class);
-        assertThat(chatOperation).isNotNull();
-        assertThat(chatPath.value()).isEqualTo("/chat");
-
-        POST healthOperation = RuntimeInternalApi.class
-                .getMethod("getProviderHealthStatus", ProviderHealthRequestDTO.class).getAnnotation(POST.class);
-        Path healthPath = RuntimeInternalApi.class
-                .getMethod("getProviderHealthStatus", ProviderHealthRequestDTO.class).getAnnotation(Path.class);
-        assertThat(healthOperation).isNotNull();
-        assertThat(healthPath.value()).isEqualTo("/provider-health");
-    }
-
-    @Test
-    void textDispatchRequest_dtoFieldsAndRequiredShapeRemainStable() throws Exception {
-        Method getChatRequest = fieldAccessor(RuntimeChatRequestDTO.class, "chatRequest",
-                ChatRequestDTO.class);
-        Method getRootAgent = fieldAccessor(RuntimeChatRequestDTO.class, "rootAgent", AgentSnapshotDTO.class);
-
-        // Wire names and required-ness are part of the published contract; a change breaks clients.
-        JsonProperty chatRequestProp = getChatRequest.getAnnotation(JsonProperty.class);
-        assertThat(chatRequestProp).isNotNull();
-        assertThat(chatRequestProp.value()).isEqualTo("chatRequest");
-        assertThat(chatRequestProp.required()).isTrue();
-
-        JsonProperty rootAgentProp = getRootAgent.getAnnotation(JsonProperty.class);
-        assertThat(rootAgentProp).isNotNull();
-        assertThat(rootAgentProp.value()).isEqualTo("rootAgent");
-        assertThat(rootAgentProp.required()).isTrue();
-
-        // The required fields must be validated by the contract (Bean Validation @NotNull).
-        assertThat(getChatRequest.getAnnotation(NotNull.class)).isNotNull();
-        assertThat(getRootAgent.getAnnotation(NotNull.class)).isNotNull();
-    }
-
-    @Test
-    void textDispatchResponse_messageFieldRemainsStableString() throws Exception {
-        Method getMessage = fieldAccessor(RuntimeChatResponseDTO.class, "message", String.class);
-        JsonProperty messageProp = getMessage.getAnnotation(JsonProperty.class);
-        assertThat(messageProp).isNotNull();
-        assertThat(messageProp.value()).isEqualTo("message");
-        assertThat(getMessage.getReturnType()).isEqualTo(String.class);
-    }
-
-    @Test
-    void providerHealth_dtoShapesRemainStable() throws Exception {
-        // Request: a required provider snapshot.
-        Method getProvider = fieldAccessor(ProviderHealthRequestDTO.class, "provider", ProviderSnapshotDTO.class);
-        JsonProperty providerProp = getProvider.getAnnotation(JsonProperty.class);
-        assertThat(providerProp).isNotNull();
-        assertThat(providerProp.value()).isEqualTo("provider");
-        assertThat(providerProp.required()).isTrue();
-        assertThat(getProvider.getAnnotation(NotNull.class)).isNotNull();
-
-        // Response: a required status enum with the documented values.
-        Method getStatus = fieldAccessor(ProviderHealthStatusDTO.class, "status",
-                ProviderHealthStatusDTO.StatusEnum.class);
-        JsonProperty statusProp = getStatus.getAnnotation(JsonProperty.class);
-        assertThat(statusProp).isNotNull();
-        assertThat(statusProp.value()).isEqualTo("status");
-        assertThat(statusProp.required()).isTrue();
-        assertThat(getStatus.getAnnotation(NotNull.class)).isNotNull();
-
-        assertThat(ProviderHealthStatusDTO.StatusEnum.values())
-                .extracting(Enum::name)
-                .containsExactlyInAnyOrder("HEALTHY", "UNHEALTHY");
     }
 
     // ---- chat() and invoke() public entry points ----
@@ -3109,17 +2997,6 @@ class RuntimeChatServiceReflectionTest {
         Method method = target.getDeclaredMethod(name, parameterTypes);
         method.setAccessible(true);
         return method.invoke(null, args);
-    }
-
-    private static Method fieldAccessor(Class<?> type, String fieldName, Class<?> expectedComponentType)
-            throws NoSuchMethodException {
-        Method getter = type.getDeclaredMethod("get" + Character.toUpperCase(fieldName.charAt(0))
-                + fieldName.substring(1));
-        assertThat(getter.getReturnType())
-                .as("%s.get%s must return %s (stable dispatch contract field type)",
-                        type.getSimpleName(), fieldName, expectedComponentType.getSimpleName())
-                .isEqualTo(expectedComponentType);
-        return getter;
     }
 
     private DispatchConfig dispatchConfig(long maxIterations) {
