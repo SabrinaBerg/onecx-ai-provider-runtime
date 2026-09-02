@@ -7,6 +7,6 @@ consumers depend on it as a Maven artifact rather than fetching source from a br
 
 == Documentation
 
-* xref:runtime-contract-artifact.adoc[]::Runtime contract artifact
+* xref:runtime-contract-artifact.adoc[Runtime contract artifact]
 
 include::onecx-ai-provider-runtime-docs.adoc[opts=optional]
