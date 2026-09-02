@@ -384,24 +384,53 @@ class OpenApiContractPublicationTest {
                 .as("the request body must be required");
         @SuppressWarnings("unchecked")
         Map<String, Object> content = (Map<String, Object>) requestBody.get("content");
+        assertThat(content)
+                .as("the request body must declare a content section before its media types")
+                .isNotNull();
         @SuppressWarnings("unchecked")
         Map<String, Object> json = (Map<String, Object>) content.get("application/json");
+        assertThat(json)
+                .as("the request body must declare an application/json media type")
+                .isNotNull();
         @SuppressWarnings("unchecked")
         Map<String, Object> schema = (Map<String, Object>) json.get("schema");
-        return (String) schema.get("$ref");
+        assertThat(schema)
+                .as("the request body application/json media type must declare a schema")
+                .isNotNull();
+        String ref = (String) schema.get("$ref");
+        assertThat(ref)
+                .as("the request body schema must be resolved via a $ref to a named component")
+                .isNotNull();
+        return ref;
     }
 
     @SuppressWarnings("unchecked")
     private static String responseSchemaRef(Map<String, Object> operation, String statusCode) {
         Map<String, Object> responses = (Map<String, Object>) operation.get("responses");
+        assertThat(responses)
+                .as("the operation must declare a responses section before " + statusCode)
+                .isNotNull();
         Map<String, Object> response = (Map<String, Object>) responses.get(statusCode);
         assertThat(response).as("operation must declare a " + statusCode + " response").isNotNull();
         @SuppressWarnings("unchecked")
         Map<String, Object> content = (Map<String, Object>) response.get("content");
+        assertThat(content)
+                .as("the " + statusCode + " response must declare a content section before its media types")
+                .isNotNull();
         @SuppressWarnings("unchecked")
         Map<String, Object> json = (Map<String, Object>) content.get("application/json");
+        assertThat(json)
+                .as("the " + statusCode + " response must declare an application/json media type")
+                .isNotNull();
         @SuppressWarnings("unchecked")
         Map<String, Object> schema = (Map<String, Object>) json.get("schema");
-        return (String) schema.get("$ref");
+        assertThat(schema)
+                .as("the " + statusCode + " response application/json media type must declare a schema")
+                .isNotNull();
+        String ref = (String) schema.get("$ref");
+        assertThat(ref)
+                .as("the " + statusCode + " response schema must be resolved via a $ref to a named component")
+                .isNotNull();
+        return ref;
     }
 }
