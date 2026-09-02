@@ -145,9 +145,8 @@ class OpenApiContractPublicationTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> post = (Map<String, Object>) chatPath.get("post");
-        assertThat(post).as("the text dispatch path must expose a POST operation").isNotNull();
-
-        assertThat(post).as("text dispatch operationId must remain stable")
+        assertThat(post).as("the text dispatch path must expose a POST operation with a stable operationId")
+                .isNotNull()
                 .containsEntry("operationId", "chat");
         assertThat(requestSchemaRef(post)).isEqualTo("#/components/schemas/RuntimeChatRequest");
         assertThat(responseSchemaRef(post, "200")).isEqualTo("#/components/schemas/RuntimeChatResponse");
@@ -164,9 +163,8 @@ class OpenApiContractPublicationTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> post = (Map<String, Object>) healthPath.get("post");
-        assertThat(post).as("the provider-health path must expose a POST operation").isNotNull();
-
-        assertThat(post).as("provider-health operationId must remain stable")
+        assertThat(post).as("the provider-health path must expose a POST operation with a stable operationId")
+                .isNotNull()
                 .containsEntry("operationId", "getProviderHealthStatus");
         assertThat(requestSchemaRef(post)).isEqualTo("#/components/schemas/ProviderHealthRequest");
         assertThat(responseSchemaRef(post, "200")).isEqualTo("#/components/schemas/ProviderHealthStatus");
@@ -386,10 +384,10 @@ class OpenApiContractPublicationTest {
     @SuppressWarnings("unchecked")
     private static String requestSchemaRef(Map<String, Object> operation) {
         Map<String, Object> requestBody = (Map<String, Object>) operation.get("requestBody");
-        assertThat(requestBody).as("operation must declare a request body").isNotNull();
-        assertThat(requestBody.get("required"))
-                .as("the request body must be required")
-                .isEqualTo(Boolean.TRUE);
+        assertThat(requestBody)
+                .as("operation must declare a required request body")
+                .isNotNull()
+                .containsEntry("required", true);
         @SuppressWarnings("unchecked")
         Map<String, Object> content = (Map<String, Object>) requestBody.get("content");
         assertThat(content)
