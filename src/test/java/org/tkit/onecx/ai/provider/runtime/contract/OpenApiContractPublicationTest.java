@@ -381,7 +381,8 @@ class OpenApiContractPublicationTest {
         Map<String, Object> requestBody = (Map<String, Object>) operation.get("requestBody");
         assertThat(requestBody).as("operation must declare a request body").isNotNull();
         assertThat(Boolean.TRUE.equals(requestBody.get("required")))
-                .as("the request body must be required");
+                .as("the request body must be required")
+                .isTrue();
         @SuppressWarnings("unchecked")
         Map<String, Object> content = (Map<String, Object>) requestBody.get("content");
         assertThat(content)
