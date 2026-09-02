@@ -73,7 +73,7 @@ Or declare it as a dependency:
 <dependency>
     <groupId>org.tkit.onecx</groupId>
     <artifactId>onecx-ai-provider-runtime</artifactId>
-    <version><released-version></version>
+    <version>released-version</version>
     <classifier>runtime-contract</classifier>
     <type>yaml</type>
 </dependency>
