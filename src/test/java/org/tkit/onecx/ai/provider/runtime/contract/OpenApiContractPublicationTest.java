@@ -26,16 +26,23 @@ import org.xml.sax.InputSource;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * Validates that the runtime OpenAPI contract published as the {@code runtime-contract}
- * classifier artifact (see {@code pom.xml} / build-helper {@code attach-artifact}) exists, is
- * structurally complete, and is wired into the release lifecycle so downstream modules can resolve
+ * Validates that the runtime OpenAPI contract published as the
+ * {@code runtime-contract}
+ * classifier artifact (see {@code pom.xml} / build-helper
+ * {@code attach-artifact}) exists, is
+ * structurally complete, and is wired into the release lifecycle so downstream
+ * modules can resolve
  * an immutable, versioned artifact instead of reading a moving branch.
  *
  * <p>
- * This is a plain JUnit test (no Quarkus bootstrap, no containers) so it runs in any environment
- * and guards two invariants: the released contract artifact is a well-formed, self-contained
- * OpenAPI document carrying the typed text-dispatch and provider-health operations consumers depend
- * on, and the Maven build actually attaches it with the exact coordinates consumers resolve by.
+ * This is a plain JUnit test (no Quarkus bootstrap, no containers) so it runs
+ * in any environment
+ * and guards two invariants: the released contract artifact is a well-formed,
+ * self-contained
+ * OpenAPI document carrying the typed text-dispatch and provider-health
+ * operations consumers depend
+ * on, and the Maven build actually attaches it with the exact coordinates
+ * consumers resolve by.
  */
 class OpenApiContractPublicationTest {
 
@@ -140,8 +147,8 @@ class OpenApiContractPublicationTest {
         Map<String, Object> post = (Map<String, Object>) chatPath.get("post");
         assertThat(post).as("the text dispatch path must expose a POST operation").isNotNull();
 
-        assertThat(post.get("operationId")).as("text dispatch operationId must remain stable")
-                .isEqualTo("chat");
+        assertThat(post).as("text dispatch operationId must remain stable")
+                .containsEntry("operationId", "chat");
         assertThat(requestSchemaRef(post)).isEqualTo("#/components/schemas/RuntimeChatRequest");
         assertThat(responseSchemaRef(post, "200")).isEqualTo("#/components/schemas/RuntimeChatResponse");
     }
@@ -159,8 +166,8 @@ class OpenApiContractPublicationTest {
         Map<String, Object> post = (Map<String, Object>) healthPath.get("post");
         assertThat(post).as("the provider-health path must expose a POST operation").isNotNull();
 
-        assertThat(post.get("operationId")).as("provider-health operationId must remain stable")
-                .isEqualTo("getProviderHealthStatus");
+        assertThat(post).as("provider-health operationId must remain stable")
+                .containsEntry("operationId", "getProviderHealthStatus");
         assertThat(requestSchemaRef(post)).isEqualTo("#/components/schemas/ProviderHealthRequest");
         assertThat(responseSchemaRef(post, "200")).isEqualTo("#/components/schemas/ProviderHealthStatus");
     }
@@ -214,9 +221,9 @@ class OpenApiContractPublicationTest {
         Map<String, Object> responseProps = (Map<String, Object>) chatResponse.get("properties");
         @SuppressWarnings("unchecked")
         Map<String, Object> messageField = (Map<String, Object>) responseProps.get("message");
-        assertThat(messageField.get("type"))
+        assertThat(messageField)
                 .as("RuntimeChatResponse.message must remain a string")
-                .isEqualTo("string");
+                .containsEntry("type", "string");
     }
 
     private Map<String, Object> loadContract() throws IOException {
@@ -380,9 +387,9 @@ class OpenApiContractPublicationTest {
     private static String requestSchemaRef(Map<String, Object> operation) {
         Map<String, Object> requestBody = (Map<String, Object>) operation.get("requestBody");
         assertThat(requestBody).as("operation must declare a request body").isNotNull();
-        assertThat(Boolean.TRUE.equals(requestBody.get("required")))
+        assertThat(requestBody.get("required"))
                 .as("the request body must be required")
-                .isTrue();
+                .isEqualTo(Boolean.TRUE);
         @SuppressWarnings("unchecked")
         Map<String, Object> content = (Map<String, Object>) requestBody.get("content");
         assertThat(content)
