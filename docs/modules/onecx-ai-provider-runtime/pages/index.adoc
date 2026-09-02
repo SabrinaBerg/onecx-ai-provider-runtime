@@ -2,6 +2,9 @@ include::onecx-ai-provider-runtime-attributes.adoc[opts=optional]
 
 = OneCX AI Provider Runtime
 
-
+This project publishes a versioned, immutable runtime contract artifact alongside its release —
+consumers depend on it as a Maven artifact rather than fetching source from a branch.
+See xref:runtime-contract-artifact.adoc[] for its coordinates, release behavior, and the
+compatibility guarantee it carries.
 
 include::onecx-ai-provider-runtime-docs.adoc[opts=optional]

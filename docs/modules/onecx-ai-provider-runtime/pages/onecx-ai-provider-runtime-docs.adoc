@@ -23,6 +23,19 @@ quarkus.langchain4j.chat-model.provider=ollama
 ----
 ====
 
+== Runtime Contract Artifact
+
+The release publishes a versioned, immutable runtime contract artifact alongside the primary JAR.
+It is the OpenAPI contract for the internal runtime service, attached with classifier
+`openapi-runtime` and type `yaml`:
+
+`org.tkit.onecx:onecx-ai-provider-runtime:<released-version>:openapi-runtime@yaml`
+
+It is bound to the released version (not a branch) and is immutable once published, so consumers
+depend on a released version rather than branch source. See xref:runtime-contract-artifact.adoc[]
+for Maven coordinates, release behavior, and the compatibility promise (typed text-dispatch and
+provider-health contract stability).
+
 == Extensions
 .Extensions List
 [%collapsible]

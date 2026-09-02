@@ -117,6 +117,56 @@ class RuntimeRestControllerTest extends AbstractTest {
         }
     }
 
+    // ---- contract compatibility: pin the typed text-dispatch and provider-health shapes ----
+
+    @Test
+    void textDispatch_requestAndResponseSchemaFieldsRemainTyped() {
+        RuntimeChatRequestDTO request = chatRequest();
+
+        // Request schema fields remain present and typed as the contract declares.
+        assertThat(request.getChatRequest()).isNotNull();
+        assertThat(request.getChatRequest().getChatMessage()).isNotNull();
+        assertThat(request.getChatRequest().getChatMessage().getType()).isEqualTo("USER");
+        assertThat(request.getChatRequest().getChatMessage().getMessage()).isEqualTo("hello");
+        assertThat(request.getRootAgent()).isNotNull();
+        assertThat(request.getRootAgent().getName()).isEqualTo("agent");
+
+        // Response schema: a typed string message survives the controller round-trip.
+        RuntimeChatResponseDTO serviceResponse = new RuntimeChatResponseDTO();
+        serviceResponse.setMessage("dispatched ok");
+        when(runtimeChatService.chat(request)).thenReturn(serviceResponse);
+
+        try (Response response = controller.chat(request)) {
+            assertThat(response.getStatus()).isEqualTo(Response.Status.OK.getStatusCode());
+            RuntimeChatResponseDTO body = (RuntimeChatResponseDTO) response.getEntity();
+            assertThat(body).isNotNull();
+            assertThat(body.getMessage()).isInstanceOf(String.class);
+            assertThat(body.getMessage()).isEqualTo("dispatched ok");
+        }
+    }
+
+    @Test
+    void providerHealth_requestAndResponseSchemaFieldsRemainTyped() {
+        ProviderHealthRequestDTO request = providerHealthRequest();
+
+        // Request schema fields remain present and typed as the contract declares.
+        assertThat(request.getProvider()).isNotNull();
+        assertThat(request.getProvider().getType()).isEqualTo("OPENAI");
+
+        // Response schema: a typed status enum survives the controller round-trip.
+        ProviderHealthStatusDTO serviceResponse = new ProviderHealthStatusDTO();
+        serviceResponse.setStatus(StatusEnum.HEALTHY);
+        when(providerHealthService.getProviderHealthStatus(request)).thenReturn(serviceResponse);
+
+        try (Response response = controller.getProviderHealthStatus(request)) {
+            assertThat(response.getStatus()).isEqualTo(Response.Status.OK.getStatusCode());
+            ProviderHealthStatusDTO body = (ProviderHealthStatusDTO) response.getEntity();
+            assertThat(body).isNotNull();
+            assertThat(body.getStatus()).isInstanceOf(StatusEnum.class);
+            assertThat(body.getStatus()).isEqualTo(StatusEnum.HEALTHY);
+        }
+    }
+
     private RuntimeChatRequestDTO chatRequest() {
         ChatMessageDTO message = new ChatMessageDTO();
         message.setType("USER");
