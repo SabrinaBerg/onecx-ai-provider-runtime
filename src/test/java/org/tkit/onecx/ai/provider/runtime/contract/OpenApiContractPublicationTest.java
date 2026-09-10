@@ -8,46 +8,32 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
 
 import org.junit.jupiter.api.Test;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
-import org.xml.sax.InputSource;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * Validates that the runtime OpenAPI contract published as the
- * {@code runtime-contract}
- * classifier artifact (see {@code pom.xml} / build-helper
- * {@code attach-artifact}) exists, is
- * structurally complete, and is wired into the release lifecycle so downstream
- * modules can resolve
- * an immutable, versioned artifact instead of reading a moving branch.
+ * Validates that the runtime OpenAPI contract is delivered with every release — both bundled into
+ * the release image and published as a versioned release asset — and that the delivered form is
+ * structurally complete, so downstream modules can resolve an immutable, versioned artifact instead
+ * of reading a moving branch.
  *
  * <p>
- * This is a plain JUnit test (no Quarkus bootstrap, no containers) so it runs
- * in any environment
- * and guards two invariants: the released contract artifact is a well-formed,
- * self-contained
- * OpenAPI document carrying the typed text-dispatch and provider-health
- * operations consumers depend
- * on, and the Maven build actually attaches it with the exact coordinates
- * consumers resolve by.
+ * This is a plain JUnit test (no Quarkus bootstrap, no containers) so it runs in any environment
+ * and guards three invariants: the contract is a well-formed, self-contained OpenAPI document
+ * carrying the typed text-dispatch and provider-health operations consumers depend on; the release
+ * Dockerfiles bundle it into the image at a canonical path; and the release workflow uploads it as
+ * a tagged release asset.
  */
 class OpenApiContractPublicationTest {
 
     private static final Path CONTRACT = Paths.get("src/main/openapi/openapi-runtime.yaml");
-    private static final Path POM = Paths.get("pom.xml");
+    private static final Path RELEASE_WORKFLOW = Paths.get(".github/workflows/build-release.yml");
+    private static final Path DOCKERFILE_JVM = Paths.get("src/main/docker/Dockerfile.jvm");
+    private static final Path DOCKERFILE_NATIVE = Paths.get("src/main/docker/Dockerfile.native");
+    private static final String CONTRACT_IMAGE_PATH = "/etc/onecx/openapi-runtime.yaml";
 
     @Test
     void contractFile_existsIsNonEmptyAndIsWellFormedOpenApi() throws IOException {
@@ -89,49 +75,49 @@ class OpenApiContractPublicationTest {
 
         assertThat(info).as("info section must be present").isNotNull();
 
-        // The immutable identity field: consumers resolve the artifact by Maven version, but the
-        // spec itself must carry a non-empty version so the released artifact is self-describing.
+        // The spec itself must carry a non-empty version so the released asset is self-describing,
+        // independently of the release tag that versions it.
         Object version = info.get("version");
         assertThat(version)
-                .as("info.version must be present (immutable identity of the contract)")
+                .as("info.version must be present (self-describing identity of the contract)")
                 .isNotNull();
         assertThat(String.valueOf(version)).isNotBlank();
     }
 
     @Test
-    void pom_declaresContractArtifactAttachment() throws Exception {
-        Path pomPath = resolveProjectRoot().resolve(POM);
-        assertThat(pomPath).as("pom.xml must be present to inspect the publication wiring").isRegularFile();
+    void release_workflow_publishesContractArtifact() throws IOException {
+        Path workflowPath = resolveProjectRoot().resolve(RELEASE_WORKFLOW);
+        assertThat(workflowPath)
+                .as(".github/workflows/build-release.yml must be present to inspect the delivery wiring")
+                .isRegularFile();
 
-        Document pom = parseXml(Files.readString(pomPath, StandardCharsets.UTF_8));
+        String workflow = Files.readString(workflowPath, StandardCharsets.UTF_8);
+        assertThat(workflow)
+                .as("the release workflow must stage the runtime OpenAPI contract file")
+                .contains("src/main/openapi/openapi-runtime.yaml")
+                .as("the release workflow must upload it as a GitHub release asset")
+                .contains("softprops/action-gh-release")
+                .as("the release workflow must name the asset with the runtime-contract suffix")
+                .contains("-runtime-contract.yaml");
+    }
 
-        // Locate the build-helper plugin declaration.
-        Element plugin = findBuildHelperPlugin(pom).orElseThrow();
-        assertThat(firstText(plugin, "groupId"))
-                .as("build-helper-maven-plugin groupId")
-                .isEqualTo("org.codehaus.mojo");
-
-        // The execution must bind the attach-artifact goal to the package phase.
-        Element execution = firstExecution(plugin).orElseThrow();
-        assertThat(execution).as("build-helper-maven-plugin must declare an execution").isNotNull();
-        assertThat(childText(execution, "phase"))
-                .as("the attach-artifact execution must be bound to the package phase")
-                .isEqualTo("package");
-        assertThat(goalNames(execution))
-                .as("the execution must run the attach-artifact goal")
-                .contains("attach-artifact");
-
-        // The attached artifact must carry the exact coordinates consumers resolve by.
-        Element artifact = firstChild(execution, "configuration", "artifacts", "artifact").orElseThrow();
-        assertThat(childText(artifact, "file"))
-                .as("the attached contract file path")
-                .isEqualTo("${project.basedir}/src/main/openapi/openapi-runtime.yaml");
-        assertThat(childText(artifact, "type"))
-                .as("the attached contract type")
-                .isEqualTo("yaml");
-        assertThat(childText(artifact, "classifier"))
-                .as("the attached contract classifier")
-                .isEqualTo("runtime-contract");
+    @Test
+    void dockerfiles_bundleContractIntoImage() throws IOException {
+        Path root = resolveProjectRoot();
+        // Both the JVM and native release images must bundle the contract so it ships versioned by
+        // the same immutable image tag as the application, retrievable by reading the file out.
+        for (Path dockerfile : List.of(DOCKERFILE_JVM, DOCKERFILE_NATIVE)) {
+            Path path = root.resolve(dockerfile);
+            assertThat(path)
+                    .as("release image %s must be present to inspect the in-image delivery wiring", dockerfile)
+                    .isRegularFile();
+            String docker = Files.readString(path, StandardCharsets.UTF_8);
+            assertThat(docker)
+                    .as("%s must COPY the runtime OpenAPI contract into the image", dockerfile)
+                    .contains("COPY")
+                    .contains(CONTRACT.toString())
+                    .contains(CONTRACT_IMAGE_PATH);
+        }
     }
 
     @Test
@@ -159,7 +145,8 @@ class OpenApiContractPublicationTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> healthPath = (Map<String, Object>) paths.get("/internal/runtime/provider-health");
-        assertThat(healthPath).as("the provider-health path must be declared").isNotNull();
+        assertThat(healthPath).as("the provider-health path /internal/runtime/provider-health must be declared")
+                .isNotNull();
 
         @SuppressWarnings("unchecked")
         Map<String, Object> post = (Map<String, Object>) healthPath.get("post");
@@ -260,7 +247,8 @@ class OpenApiContractPublicationTest {
     private static Path resolveProjectRoot() {
         Path candidate = Paths.get("").toAbsolutePath();
         for (int depth = 0; depth < 5; depth++) {
-            if (Files.isRegularFile(candidate.resolve(POM)) && Files.isRegularFile(candidate.resolve(CONTRACT))) {
+            if (Files.isRegularFile(candidate.resolve(CONTRACT))
+                    && Files.isRegularFile(candidate.resolve(RELEASE_WORKFLOW))) {
                 return candidate;
             }
             if (candidate.getParent() == null) {
@@ -269,92 +257,6 @@ class OpenApiContractPublicationTest {
             candidate = candidate.getParent();
         }
         return Paths.get("").toAbsolutePath();
-    }
-
-    private static Document parseXml(String content) throws IOException, ParserConfigurationException,
-            org.xml.sax.SAXException {
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        factory.setNamespaceAware(false);
-        DocumentBuilder builder = factory.newDocumentBuilder();
-        return builder.parse(new InputSource(new java.io.StringReader(content)));
-    }
-
-    /** Finds the {@code <plugin>} element declaring the build-helper plugin. */
-    private static Optional<Element> findBuildHelperPlugin(Document pom) {
-        NodeList nodes = pom.getElementsByTagName("artifactId");
-        for (int i = 0; i < nodes.getLength(); i++) {
-            Node n = nodes.item(i);
-            if (n instanceof Element && "build-helper-maven-plugin".equals(((Element) n).getTextContent().trim())) {
-                return ancestor((Element) n, "plugin");
-            }
-        }
-        return Optional.empty();
-    }
-
-    private static Optional<Element> ancestor(Element element, String tag) {
-        Node parent = element.getParentNode();
-        while (parent != null) {
-            if (parent instanceof Element && tag.equals(parent.getNodeName())) {
-                return Optional.of((Element) parent);
-            }
-            parent = parent.getParentNode();
-        }
-        return Optional.empty();
-    }
-
-    private static Optional<Element> firstExecution(Element plugin) {
-        NodeList nodes = plugin.getElementsByTagName("execution");
-        return nodes.getLength() > 0 ? Optional.of((Element) nodes.item(0)) : Optional.empty();
-    }
-
-    private static List<String> goalNames(Element execution) {
-        List<String> goals = new ArrayList<>();
-        NodeList nodes = execution.getElementsByTagName("goal");
-        for (int i = 0; i < nodes.getLength(); i++) {
-            if (nodes.item(i) instanceof Element) {
-                goals.add(((Element) nodes.item(i)).getTextContent().trim());
-            }
-        }
-        return goals;
-    }
-
-    /** Walks a fixed tag chain from {@code root}, returning the element at the last tag. */
-    private static Optional<Element> firstChild(Element root, String... chain) {
-        Element current = root;
-        for (String tag : chain) {
-            NodeList nodes = current.getElementsByTagName(tag);
-            Element found = null;
-            for (int i = 0; i < nodes.getLength(); i++) {
-                if (nodes.item(i) instanceof Element) {
-                    found = (Element) nodes.item(i);
-                    break;
-                }
-            }
-            if (found == null) {
-                return Optional.empty();
-            }
-            current = found;
-        }
-        return Optional.of(current);
-    }
-
-    private static String childText(Element element, String tag) {
-        NodeList nodes = element.getChildNodes();
-        for (int i = 0; i < nodes.getLength(); i++) {
-            Node n = nodes.item(i);
-            if (n instanceof Element && tag.equals(n.getNodeName())) {
-                return ((Element) n).getTextContent().trim();
-            }
-        }
-        return null;
-    }
-
-    private static String firstText(Element element, String tag) {
-        NodeList nodes = element.getElementsByTagName(tag);
-        if (nodes.getLength() > 0 && nodes.item(0) instanceof Element) {
-            return ((Element) nodes.item(0)).getTextContent().trim();
-        }
-        return null;
     }
 
     @SuppressWarnings("unchecked")
@@ -414,7 +316,7 @@ class OpenApiContractPublicationTest {
     private static String responseSchemaRef(Map<String, Object> operation, String statusCode) {
         Map<String, Object> responses = (Map<String, Object>) operation.get("responses");
         assertThat(responses)
-                .as("the operation must declare a responses section before " + statusCode)
+                .as("operation must declare a responses section before " + statusCode)
                 .isNotNull();
         Map<String, Object> response = (Map<String, Object>) responses.get(statusCode);
         assertThat(response).as("operation must declare a " + statusCode + " response").isNotNull();
@@ -435,7 +337,7 @@ class OpenApiContractPublicationTest {
                 .isNotNull();
         String ref = (String) schema.get("$ref");
         assertThat(ref)
-                .as("the " + statusCode + " response schema must be resolved via a $ref to a named component")
+                .as("the response schema must be resolved via a $ref to a named component")
                 .isNotNull();
         return ref;
     }
