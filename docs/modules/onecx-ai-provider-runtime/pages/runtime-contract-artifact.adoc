@@ -67,28 +67,10 @@ identifies the API it pins independently of the runtime version.
 Consumers pin the contract to a released tag and retrieve it from either of its forms, without
 pulling source from a branch.
 
-=== From the release image
-
-The contract ships at `/etc/onecx/openapi-runtime.yaml` inside the pinned image. Read it straight
-out of a running deployment (pin the image tag so the contract matches the runtime):
-
-[source,bash]
-----
-kubectl cp <namespace>/<pod>:/etc/onecx/openapi-runtime.yaml contract.yaml
-----
-
-Or copy it from the image without a running pod:
-
-[source,bash]
-----
-docker run --rm --entrypoint cat ghcr.io/onecx/onecx-ai-provider-runtime:<tag> \
-  /etc/onecx/openapi-runtime.yaml > contract.yaml
-----
-
 === From the release asset
 
-For a pipeline that cannot run the service (e.g. a standalone client build), fetch the asset by tag
-instead. For a one-off download:
+The preferred approach for client generation and contract checks, since it needs no running
+service. Fetch the tagged asset by tag:
 
 [source,bash]
 ----
@@ -107,6 +89,24 @@ curl -fL \
 
 The tag in the URL and the asset name must match the same release; the `-runtime-contract.yaml`
 suffix distinguishes the contract from any other release assets.
+
+=== From the release image
+
+More useful for debugging a running deployment. Both the JVM and native images carry the contract
+verbatim at `/etc/onecx/openapi-runtime.yaml`; read it straight out of the pinned image:
+
+[source,bash]
+----
+kubectl cp <namespace>/<pod>:/etc/onecx/openapi-runtime.yaml contract.yaml
+----
+
+Or copy it from the image without a running pod:
+
+[source,bash]
+----
+docker run --rm --entrypoint cat ghcr.io/onecx/onecx-ai-provider-runtime:<tag> \
+  /etc/onecx/openapi-runtime.yaml > contract.yaml
+----
 
 == Compatibility scope
 
